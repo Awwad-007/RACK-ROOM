@@ -1,9 +1,9 @@
-# GearGrid — Smart Campus Digital Twin
+# RACK-ROOM — Smart Campus Digital Twin
 
 > Intelligent clash-free campus equipment scheduling powered by an interactive 3D digital twin, the ZeroClash concurrency engine, dynamic waitlist cascading, and QR-verified check-ins.
 
 <p align="center">
-  <img src="reference/campus-hub.jpeg" alt="GearGrid Smart Campus Hub Preview" width="920" />
+  <img src="reference/campus-hub.jpeg" alt="RACK-ROOM Smart Campus Hub Preview" width="920" />
 </p>
 
 <p align="center">
@@ -19,7 +19,8 @@
 
 ## Table of Contents
 
-- [Overview](#overview)
+- [Problem Statement & Overview](#problem-statement--overview)
+- [Target Architecture](#target-architecture)
 - [Feature Architecture](#feature-architecture)
   - [1. 3D Campus Digital Twin](#1-3d-campus-digital-twin)
   - [2. ZeroClash Concurrency Engine](#2-zeroclash-concurrency-engine)
@@ -28,22 +29,32 @@
   - [5. QR Check-In & Check-Out](#5-qr-check-in--check-out)
   - [6. Admin Override & Audit Ledger](#6-admin-override--audit-ledger)
   - [7. Demand Intelligence](#7-demand-intelligence)
-- [System Architecture](#system-architecture)
 - [Implementation Roadmap](#implementation-roadmap)
+- [System Architecture](#system-architecture)
 - [Tech Stack](#tech-stack)
-- [Local Setup & Installation](#local-setup--installation)
-- [Production Build](#production-build)
+- [Getting Started & Local Setup](#getting-started--local-setup)
+- [Production Build & Tests](#production-build--tests)
 - [Environment Configuration](#environment-configuration)
 - [Project Directory Structure](#project-directory-structure)
 - [License](#license)
 
 ---
 
-## Overview
+## Problem Statement & Overview
 
-**GearGrid** is a smart campus equipment management platform designed to eliminate resource conflicts across academic departments, research labs, and media facilities. Combining an immersive 3D spatial interface with a conflict-free scheduling engine, GearGrid enables students, researchers, faculty, and lab managers to visualize facility availability, reserve high-demand equipment, and streamline physical check-ins.
+Shared university laboratories, maker spaces, and media facilities frequently experience scheduling friction: overlapping reservations, phantom bookings where physical equipment sits idle, and a lack of real-time visibility into which lab wing holds specific hardware.
 
-The platform functions out-of-the-box with a high-fidelity mock dataset and supports zero-friction transition to Supabase (PostgreSQL) persistence with row-level security and conflict guards.
+**RACK-ROOM** resolves this by pairing an interactive 3D campus digital twin with a deterministic conflict-prevention engine, automated waitlist cascading, and physical QR check-in workflows. The platform functions out-of-the-box with an in-memory seed dataset and supports zero-friction transition to Supabase (PostgreSQL) persistence with row-level security and concurrency guards.
+
+---
+
+## Target Architecture
+
+- **Frontend & View**: React 19, TypeScript 5.7, Vite 6, Tailwind CSS 3.4
+- **Spatial Visualization**: React Three Fiber 9, Drei 10, Three.js 0.174 (isometric campus twin)
+- **Scheduling Core**: Deterministic interval math (`[start, end)` checking), no-show auto-release, priority cascading
+- **State Management**: Centralized Zustand store with local persistence
+- **Testing**: Vitest test runner
 
 ---
 
@@ -51,13 +62,13 @@ The platform functions out-of-the-box with a high-fidelity mock dataset and supp
 
 ### 1. 3D Campus Digital Twin
 - **Isometric Spatial Map**: Interactive campus layout rendered with Three.js and React Three Fiber, featuring custom building volumes (Science Wing, Media Labs, Central Library Locker, Cube Archive).
-- **Interactive Equipment Pins**: Floating pins showing real-time unit status (Available, Booked, Maintenance) with custom high-contrast icon sprites.
+- **Interactive Equipment Pins**: Floating pins showing real-time unit status (Available, Booked, Maintenance) with high-contrast icon sprites.
 - **Dynamic Camera & Controls**: Smooth orbit damping, pan/zoom constraints, wireframe toggles, and automatic camera centering when searching or selecting units.
 - **Campus Usage Heatmap**: Dynamic visual overlay reflecting aggregate hourly building utilization.
 
 ### 2. ZeroClash Concurrency Engine
 - **Atomic Conflict Prevention**: Prevents overlapping bookings on identical hardware units across all active reservation states (`confirmed`, `pending`, `in-use`, `checked-in`).
-- **Interval Overlap Verification**: Real-time interval checks ensuring start/end boundaries do not collide.
+- **Interval Overlap Verification**: Real-time interval checks (`(startA < endB) && (endA > startB)`) ensuring temporal boundaries do not collide.
 - **Alternative Slot Finder**: Automatically computes and recommends the nearest open time slots when an initial request conflicts with existing reservations.
 
 ### 3. Concurrency Simulation & Calendar
@@ -72,8 +83,8 @@ The platform functions out-of-the-box with a high-fidelity mock dataset and supp
 
 ### 5. QR Check-In & Check-Out
 - **Signed QR Tokens**: Built-in Reed-Solomon QR encoder generating secure, verifiable booking payloads.
-- **Hardware & Software Scanner**: Supports device camera barcode detection via Web API with immediate fallback to simulated scanner input.
-- **Strict Verification Windows**: Validates that check-ins occur within valid temporal thresholds and restricts check-outs only to previously verified units.
+- **Hardware & Software Scanner**: Supports device camera barcode detection via Web API with immediate fallback to manual token input.
+- **Strict Verification Windows**: Validates that check-ins occur within valid temporal thresholds (-15m before start to scheduled end) and restricts check-outs only to previously verified units.
 
 ### 6. Admin Override & Audit Ledger
 - **Administrative Control**: Direct capabilities for lab administrators to resolve booking disputes, approve/reject pending reservations, and place units under maintenance locks.
@@ -94,7 +105,8 @@ The platform functions out-of-the-box with a high-fidelity mock dataset and supp
 - [ ] UI components and interactive dashboards (`src/components/`, `src/App.tsx`)
 
 ### Core Scheduling Engine (Milestone 2)
-- ZeroClash concurrency and conflict detection algorithm with interval checking.
+- ZeroClash concurrency and interval clash detection via `(startA < endB) && (endA > startB)`.
+- Grace window management (-15m check-in window threshold).
 - Dynamic waitlist cascade queue with multi-factor priority scoring.
 - QR check-in / check-out token generator and verifier.
 - Supabase SQL schema migrations and advisory locking guards.
@@ -112,7 +124,7 @@ The platform functions out-of-the-box with a high-fidelity mock dataset and supp
 
 ```mermaid
 flowchart TD
-  User[Campus User / Admin] --> App[GearGrid App Shell]
+  User[Campus User / Admin] --> App[RACK-ROOM App Shell]
   App --> Twin[3D Campus Digital Twin]
   App --> Scheduling[Core Scheduling Interface]
   App --> Assistant[GearGrid AI Assistant]
@@ -145,27 +157,30 @@ flowchart TD
 ## Tech Stack
 
 | Layer | Technologies |
-| --- | --- |
+| :--- | :--- |
 | **Frontend Framework** | React 19, TypeScript 5.7, Vite 6 |
 | **3D Graphics & Canvas** | Three.js 0.174, React Three Fiber 9, Drei 10, Postprocessing |
 | **Styling & UI Tokens** | Tailwind CSS 3.4, Custom CSS theme variables (Dark/Light) |
 | **State Management** | Zustand 5 (Spatial Campus Store), React State / Context |
+| **Test Runner** | Vitest 5 |
 | **Icons & Assets** | Lucide React, Custom equipment circular badges |
 | **Data & Persistence** | Local seed dataset, optional Supabase PostgreSQL integration |
 | **Database Migrations** | PostgreSQL schemas, RLS policies, advisory lock conflict guards |
 
 ---
 
-## Local Setup & Installation
+## Getting Started & Local Setup
 
 ### Prerequisites
 
-- **Node.js**: `v18.0.0` or higher
-- **npm**: `v9.0.0` or higher
+- **Node.js**: `v20.0.0` or higher
+- **npm**: `v10.0.0` or higher
 
-### 1. Install Dependencies
+### 1. Clone & Install Dependencies
 
 ```bash
+git clone https://github.com/Awwad-007/RACK-ROOM.git
+cd RACK-ROOM
 npm install
 ```
 
@@ -182,16 +197,19 @@ http://localhost:5173
 
 ---
 
-## Production Build
+## Production Build & Tests
+
+To execute the test suite:
+```bash
+npm run test
+```
 
 To validate TypeScript types and generate an optimized production bundle:
-
 ```bash
 npm run build
 ```
 
 To preview the production build locally:
-
 ```bash
 npm run preview
 ```
@@ -200,7 +218,7 @@ npm run preview
 
 ## Environment Configuration
 
-GearGrid runs completely standalone with full functionality using its built-in seed dataset.
+RACK-ROOM runs completely standalone with full functionality using its built-in seed dataset.
 
 To optionally connect a live Supabase PostgreSQL backend, create a `.env` file in the project root:
 

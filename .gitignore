@@ -1,4 +1,5 @@
 # Dependencies
+node_modules/
 node_modules
 .pnp
 .pnp.js
@@ -6,16 +7,22 @@ node_modules
 # Local Codex inspection artifacts
 .codex-inspect
 
-# Production build
-dist
-dist-ssr
+# Production build outputs
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 
-# Local env files
+# Environment and local credentials
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env.*.local
+*.env
 
 # Logs
 npm-debug.log*
@@ -24,22 +31,32 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Editor directories and files
+# Editor & IDE artifacts
 .vscode/*
 !.vscode/extensions.json
+.vscode/
+.idea/
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# TypeScript build info and emitted artifacts
-*.tsbuildinfo
-vite.config.js
-vite.config.d.ts
+# OS artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
 
 # Test screenshots in root
 /chrome_*.png
 /edge_*.png
+
+# Vitest / coverage
+coverage/
+.nyc_output/
