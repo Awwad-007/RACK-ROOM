@@ -1,0 +1,998 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { MOCK_EQUIPMENT, EquipmentUnit } from '../data/mock';
+import {
+  AdminActionType,
+  AdminAuditEntry,
+  AdminOverrideDraft,
+  BookingDraft,
+  BookingRecord,
+  BookingStatus,
+  CampusRole,
+  EquipmentCategory,
+  ResourceUnit,
+  SchedulingDataset,
+  ToastMessage,
+  WaitlistDraft,
+  WaitlistEntry,
+} from '../types/scheduling';
+import {
+  isSupabaseEnabled,
+  loadSupabaseSchedulingDataset,
+  persistAuditRows,
+  persistBookingRow,
+  persistEquipmentRows,
+  persistWaitlistRow,
+} from './supabaseScheduling';
+
+const OFFER_WINDOW_MS = 10 * 60 * 1000;
+const ACTIVE_STATUSES: BookingStatus[] = ['confirmed', 'pending', 'in-use', 'checked-in', 'maintenance'];
+const MAINTENANCE_SAFE_STATUSES: BookingStatus[] = ['maintenance'];
+
+const CATEGORY_BY_TYPE: Record<EquipmentUnit['type'], EquipmentCategory> = {
+  camera: 'DSLR Camera',
+  gpu: 'GPU Cluster',
+  vr: 'VR Headset',
+  microscope: 'Microscope',
+  printer: '3D Printer',
+  projector: 'Projector',
+  labkit: 'Lab Kit',
+  device: 'Testing Device',
+};
+
+const ROLE_WEIGHT: Record<CampusRole, number> = {
+  'Lab Admin': 30,
+  Faculty: 26,
+  Researcher: 24,
+  'Club Lead': 18,
+  Student: 14,
+};
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+export const createQrToken = (bookingId: string, equipmentId: string, startAt: string) => `ZC|${bookingId}|${equipmentId}|${startAt}`;
+
+export const parseQrToken = (payload: string) => {
+  const [prefix, bookingId, equipmentId, startAt] = payload.trim().split('|');
+  if (prefix !== 'ZC' || !bookingId || !equipmentId || !startAt) return null;
+  return { bookingId, equipmentId, startAt };
+};
+
+export const calculatePriorityScore = (role: CampusRole, urgency: number, noShowPenalty: number) =>
+  clamp(Math.round(ROLE_WEIGHT[role] + urgency * 12 - noShowPenalty * 2), 0, 100);
+
+export const priorityFormula = 'Role weight + urgency x 12 - no-show penalty x 2';
+
+export const categoryForUnit = (unit: EquipmentUnit): EquipmentCategory => CATEGORY_BY_TYPE[unit.type];
+
+export const getLocalResources = (): ResourceUnit[] =>
+  Object.values(MOCK_EQUIPMENT).map((unit) => ({
+    id: unit.id,
+    name: unit.name,
+    unitId: unit.unitNumber,
+    category: categoryForUnit(unit),
+    buildingId: unit.buildingId,
+    buildingName: unit.buildingName,
+    status: unit.status,
+  }));
+
+const hourIso = (date: Date, hour: number, dayOffset = 0) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + dayOffset);
+  next.setHours(hour, 0, 0, 0);
+  return next.toISOString();
+};
+
+const addHoursIso = (iso: string, hours: number) => {
+  const date = new Date(iso);
+  date.setHours(date.getHours() + hours);
+  return date.toISOString();
+};
+
+export const hasIntervalOverlap = (
+  existingStart: string,
+  existingEnd: string,
+  requestedStart: string,
+  requestedEnd: string,
+) => new Date(existingStart) < new Date(requestedEnd) && new Date(existingEnd) > new Date(requestedStart);
+
+export const buildDemoBookings = (resources: ResourceUnit[], anchor = new Date()): BookingRecord[] => {
+  const today = new Date(anchor);
+  today.setHours(0, 0, 0, 0);
+  const demandCycle = ['eq-cam-01', 'eq-cam-04', 'eq-gpu-01', 'eq-vr-01', 'eq-print-01', 'eq-proj-01', 'eq-micro-02', 'eq-labkit-01', 'eq-device-01'];
+  const bookings: BookingRecord[] = [];
+
+  for (let day = -28; day <= 14; day += 1) {
+    const dayOfWeek = new Date(today.getFullYear(), today.getMonth(), today.getDate() + day).getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const dailyCount = isWeekend ? 3 : 5 + (Math.abs(day) % 3);
+    for (let index = 0; index < dailyCount; index += 1) {
+      const equipmentId = demandCycle[(day + 60 + index * 2) % demandCycle.length];
+      const resource = resources.find((item) => item.id === equipmentId);
+      if (!resource) continue;
+      const startHour = 9 + ((index * 2 + dayOfWeek) % 8);
+      const startAt = hourIso(today, startHour, day);
+      const endAt = addHoursIso(startAt, equipmentId.includes('gpu') ? 4 : 2 + (index % 2));
+      const now = Date.now();
+      const status: BookingStatus =
+        resource.status === 'maintenance' && day >= 0 && day <= 1
+          ? 'maintenance'
+          : new Date(startAt).getTime() <= now && new Date(endAt).getTime() > now
+          ? 'in-use'
+          : day > 0 && index % 5 === 0
+          ? 'pending'
+          : 'confirmed';
+
+      bookings.push({
+        id: `demo-${day}-${index}-${equipmentId}`,
+        equipmentId,
+        equipmentName: resource.name,
+        unitId: resource.unitId,
+        category: resource.category,
+        buildingId: resource.buildingId,
+        buildingName: resource.buildingName,
+        requesterName: ['Student Member', 'Faculty Researcher', 'Campus Robotics Lab', 'Media Arts Guild', 'Graduate Scholar'][index % 5],
+        requesterRole: ['Student', 'Faculty', 'Lab Admin', 'Researcher'][index % 4],
+        purpose: ['Course project', 'Research lab', 'Studio production', 'Prototype validation'][index % 4],
+        startAt,
+        endAt,
+        status,
+        source: 'demo',
+        qrToken: createQrToken(`demo-${day}-${index}-${equipmentId}`, equipmentId, startAt),
+      });
+    }
+  }
+
+  const liveResource = resources.find((item) => item.id === 'eq-device-01') ?? resources[0];
+  if (liveResource) {
+    const startAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const endAt = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+    const id = `demo-live-${liveResource.id}`;
+    bookings.push({
+      id,
+      equipmentId: liveResource.id,
+      equipmentName: liveResource.name,
+      unitId: liveResource.unitId,
+      category: liveResource.category,
+      buildingId: liveResource.buildingId,
+      buildingName: liveResource.buildingName,
+      requesterName: 'Demo QR User',
+      requesterRole: 'Student',
+      purpose: 'Live QR check-in test booking',
+      startAt,
+      endAt,
+      status: 'confirmed',
+      source: 'demo',
+      qrToken: createQrToken(id, liveResource.id, startAt),
+    });
+  }
+
+  return bookings;
+};
+
+const createAudit = (action: AdminActionType, target: string, reason: string, actor = 'Demo Admin'): AdminAuditEntry => ({
+  id: `audit-${crypto.randomUUID()}`,
+  action,
+  target,
+  reason,
+  actor,
+  timestamp: new Date().toISOString(),
+});
+
+const createToast = (tone: ToastMessage['tone'], title: string, message: string): ToastMessage => ({
+  id: `toast-${crypto.randomUUID()}`,
+  tone,
+  title,
+  message,
+});
+
+const persistenceNote = (source: SchedulingDataset['source']) =>
+  source === 'supabase' ? '' : ' Demo fallback only; refresh resets this change unless Supabase is configured.';
+
+const buildWaitlistPressure = (entries: WaitlistEntry[]) =>
+  entries.reduce<Record<string, number>>((acc, entry) => {
+    if (entry.status === 'waiting' || entry.status === 'offered') acc[entry.equipmentId] = (acc[entry.equipmentId] ?? 0) + 1;
+    return acc;
+  }, {});
+
+const hasEquipmentConflict = (
+  bookings: BookingRecord[],
+  equipmentId: string,
+  startAt: string,
+  endAt: string,
+  ignoreBookingId?: string,
+  statuses = ACTIVE_STATUSES,
+) =>
+  bookings.some(
+    (booking) =>
+      booking.id !== ignoreBookingId &&
+      booking.equipmentId === equipmentId &&
+      statuses.includes(booking.status) &&
+      hasIntervalOverlap(booking.startAt, booking.endAt, startAt, endAt),
+  );
+
+const isUnderMaintenance = (bookings: BookingRecord[], resources: ResourceUnit[], equipmentId: string, startAt: string, endAt: string) => {
+  const resource = resources.find((item) => item.id === equipmentId);
+  const hasMaintenanceBookings = bookings.some((booking) => booking.equipmentId === equipmentId && booking.status === 'maintenance');
+  if (hasMaintenanceBookings) return hasEquipmentConflict(bookings, equipmentId, startAt, endAt, undefined, MAINTENANCE_SAFE_STATUSES);
+  return resource?.status === 'maintenance';
+};
+
+const deriveResourceStatus = (resource: ResourceUnit, bookings: BookingRecord[]): ResourceUnit['status'] => {
+  const now = new Date().toISOString();
+  const hasMaintenanceBlock = bookings.some(
+    (booking) => booking.equipmentId === resource.id && booking.status === 'maintenance',
+  );
+  if (hasMaintenanceBlock) return 'maintenance';
+
+  const hasCurrentBooking = bookings.some(
+    (booking) =>
+      booking.equipmentId === resource.id &&
+      ['confirmed', 'pending', 'in-use', 'checked-in'].includes(booking.status) &&
+      hasIntervalOverlap(booking.startAt, booking.endAt, now, now),
+  );
+
+  return hasCurrentBooking ? 'booked' : 'available';
+};
+
+const syncResourceStatuses = (resources: ResourceUnit[], bookings: BookingRecord[]) =>
+  resources.map((resource) => ({ ...resource, status: deriveResourceStatus(resource, bookings) }));
+
+const rankWaitlist = (entries: WaitlistEntry[]) =>
+  [...entries].sort((a, b) => b.priorityScore - a.priorityScore || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+const activateNextOffer = (
+  dataset: SchedulingDataset,
+  equipmentId: string,
+  startAt: string,
+  endAt: string,
+  reason: string,
+  actor = 'Cascade Engine',
+) => {
+  if (isUnderMaintenance(dataset.bookings, dataset.resources, equipmentId, startAt, endAt)) {
+    return {
+      dataset: {
+        ...dataset,
+        auditLog: [createAudit('waitlist-offer', equipmentId, 'No offer made because the equipment is under maintenance.', actor), ...dataset.auditLog],
+      },
+      toast: createToast('warning', 'No cascade offer', 'The freed slot is blocked by maintenance safety.'),
+    };
+  }
+
+  if (hasEquipmentConflict(dataset.bookings, equipmentId, startAt, endAt)) {
+    return {
+      dataset,
+      toast: createToast('warning', 'No cascade offer', 'Another active booking already occupies that slot.'),
+    };
+  }
+
+  const eligible = rankWaitlist(
+    dataset.waitlistEntries.filter(
+      (entry) =>
+        entry.equipmentId === equipmentId &&
+        entry.status === 'waiting' &&
+        hasIntervalOverlap(entry.requestedStartAt, entry.requestedEndAt, startAt, endAt),
+    ),
+  );
+
+  const next = eligible[0];
+  if (!next) {
+    return {
+      dataset: {
+        ...dataset,
+        auditLog: [createAudit('waitlist-offer', equipmentId, 'No eligible waitlist entries for the freed slot.', actor), ...dataset.auditLog],
+      },
+      toast: createToast('info', 'Queue empty', 'No eligible waitlist entry matched the freed slot.'),
+    };
+  }
+
+  const offerExpiresAt = new Date(Date.now() + OFFER_WINDOW_MS).toISOString();
+  const updatedEntries = dataset.waitlistEntries.map((entry) =>
+    entry.id === next.id
+      ? {
+          ...entry,
+          status: 'offered' as const,
+          offerExpiresAt,
+          offeredStartAt: startAt,
+          offeredEndAt: endAt,
+        }
+      : entry,
+  );
+
+  const updatedDataset = {
+    ...dataset,
+    waitlistEntries: updatedEntries,
+    waitlistPressure: buildWaitlistPressure(updatedEntries),
+    auditLog: [
+      createAudit('waitlist-offer', `${next.userName} · ${next.equipmentName}`, `${reason} Offered ${new Date(startAt).toLocaleString()} slot with a 10-minute response window.`, actor),
+      ...dataset.auditLog,
+    ],
+  };
+
+  return {
+    dataset: updatedDataset,
+    toast: createToast('success', 'Cascade offer sent', `${next.userName} is now first in line for ${next.equipmentName}.`),
+  };
+};
+
+const buildDemoWaitlist = (resources: ResourceUnit[], bookings: BookingRecord[]) => {
+  const candidates = bookings
+    .filter((booking) => booking.status === 'confirmed' || booking.status === 'pending')
+    .filter((booking) => new Date(booking.startAt).getTime() > Date.now())
+    .slice(0, 10);
+
+  const names = ['Student Member', 'Faculty Researcher', 'Lab Specialist', 'Graduate Scholar', 'Department Fellow', 'Student Designer', 'Senior Researcher', 'Lab Administrator', 'Undergraduate Scholar', 'Lead Investigator'];
+  const roles: CampusRole[] = ['Student', 'Researcher', 'Faculty', 'Club Lead', 'Lab Admin'];
+
+  return candidates.map((booking, index) => {
+    const resource = resources.find((item) => item.id === booking.equipmentId);
+    const urgency = 2 + (index % 4);
+    const noShowPenalty = index % 3 === 0 ? 3 : index % 5 === 0 ? 8 : 0;
+    const userRole = roles[index % roles.length];
+    const requestedStart = new Date(booking.startAt);
+    requestedStart.setMinutes(requestedStart.getMinutes() - (index % 2) * 30);
+    const requestedEnd = new Date(booking.endAt);
+    requestedEnd.setMinutes(requestedEnd.getMinutes() + (index % 3) * 20);
+
+    return {
+      id: `wait-${index}-${booking.equipmentId}`,
+      equipmentId: booking.equipmentId,
+      equipmentName: resource?.name ?? booking.equipmentName,
+      unitId: resource?.unitId ?? booking.unitId,
+      buildingName: resource?.buildingName ?? booking.buildingName,
+      requestedStartAt: requestedStart.toISOString(),
+      requestedEndAt: requestedEnd.toISOString(),
+      userName: names[index % names.length],
+      userRole,
+      urgency,
+      noShowPenalty,
+      priorityScore: calculatePriorityScore(userRole, urgency, noShowPenalty),
+      status: 'waiting' as const,
+      createdAt: new Date(Date.now() - (index + 1) * 18 * 60_000).toISOString(),
+      notes: ['Capstone shoot', 'Grant deadline', 'Studio practicum', 'Lab milestone'][index % 4],
+    };
+  });
+};
+
+const buildDemoDataset = (): SchedulingDataset => {
+  const resources = getLocalResources();
+  const bookings = buildDemoBookings(resources);
+  const waitlistEntries = buildDemoWaitlist(resources, bookings);
+  return {
+    resources: syncResourceStatuses(resources, bookings),
+    bookings,
+    waitlistEntries,
+    waitlistPressure: buildWaitlistPressure(waitlistEntries),
+    auditLog: [
+      createAudit('override-decision', 'System policy', 'Override actions require a reason; overlap and maintenance safety checks are enforced for every action.', 'System'),
+    ],
+    source: 'demo',
+    sourceLabel: 'Campus equipment scheduling',
+  };
+};
+
+export const useSchedulingData = () => {
+  const [dataset, setDataset] = useState<SchedulingDataset>(() => buildDemoDataset());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [remoteReady, setRemoteReady] = useState(false);
+
+  const pushToast = useCallback((toast: ToastMessage) => {
+    setToasts((current) => [toast, ...current].slice(0, 4));
+  }, []);
+
+  const dismissToast = useCallback((toastId: string) => {
+    setToasts((current) => current.filter((toast) => toast.id !== toastId));
+  }, []);
+
+  useEffect(() => {
+    if (toasts.length === 0) return;
+    const timer = window.setTimeout(() => {
+      setToasts((current) => current.slice(0, -1));
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [toasts]);
+
+  const loadRemoteDataset = useCallback(async () => {
+    if (!isSupabaseEnabled()) return false;
+    setLoading(true);
+    setError(null);
+    try {
+      const remote = await loadSupabaseSchedulingDataset(getLocalResources());
+      if (!remote) return false;
+      if (remote.bookings.length === 0 && remote.waitlistEntries.length === 0 && remote.auditLog.length === 0) {
+        const seeded = buildDemoDataset();
+        setDataset({ ...seeded, resources: syncResourceStatuses(remote.resources, seeded.bookings), source: 'supabase', sourceLabel: 'Campus equipment scheduling' });
+      } else {
+        setDataset({ ...remote, resources: syncResourceStatuses(remote.resources, remote.bookings) });
+      }
+      setRemoteReady(true);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load Supabase scheduling data.');
+      setRemoteReady(false);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRemoteDataset();
+  }, [loadRemoteDataset]);
+
+  useEffect(() => {
+    if (!remoteReady || dataset.source !== 'supabase' || !isSupabaseEnabled()) return;
+    const timer = window.setTimeout(() => {
+      Promise.all([
+        persistEquipmentRows(dataset.resources),
+        ...dataset.bookings.map((booking) => persistBookingRow(booking)),
+        ...dataset.waitlistEntries.map((entry) => persistWaitlistRow(entry)),
+        persistAuditRows(dataset.auditLog),
+      ]).catch((err) => {
+        const message = err instanceof Error ? err.message : 'Unable to persist scheduling data.';
+        setError(message);
+        pushToast(createToast('error', 'Changes not persisted', message));
+      });
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [dataset, pushToast, remoteReady]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    await Promise.resolve();
+    if (await loadRemoteDataset()) {
+      pushToast(createToast('info', 'Schedule refreshed', 'Latest equipment, booking, waitlist, and audit records loaded.'));
+      return;
+    }
+    const next = buildDemoDataset();
+    setDataset(next);
+    setLoading(false);
+    pushToast(createToast('info', 'Schedule refreshed', 'Bookings, waitlist queues, admin log, and forecasts were reset.'));
+  }, [loadRemoteDataset, pushToast]);
+
+  const createBooking = useCallback(
+    async (draft: BookingDraft) => {
+      if (new Date(draft.endAt) <= new Date(draft.startAt)) {
+        throw new Error('End time must be after start time.');
+      }
+      if (new Date(draft.startAt).getTime() < Date.now() - 60_000) {
+        throw new Error('Start time cannot be in the past.');
+      }
+
+      const resource = dataset.resources.find((item) => item.id === draft.equipmentId);
+      if (!resource) throw new Error('Selected equipment could not be found.');
+      if (isUnderMaintenance(dataset.bookings, dataset.resources, draft.equipmentId, draft.startAt, draft.endAt)) {
+        throw new Error('This unit is blocked for maintenance in that interval.');
+      }
+      if (hasEquipmentConflict(dataset.bookings, draft.equipmentId, draft.startAt, draft.endAt)) {
+        throw new Error('That unit already has a booking in this interval.');
+      }
+
+      const booking: BookingRecord = {
+        id: `local-${crypto.randomUUID()}`,
+        equipmentId: resource.id,
+        equipmentName: resource.name,
+        unitId: resource.unitId,
+        category: resource.category,
+        buildingId: resource.buildingId,
+        buildingName: resource.buildingName,
+        requesterName: draft.requesterName || 'Demo borrower',
+        requesterRole: 'Campus user',
+        purpose: draft.purpose || 'New equipment reservation',
+        startAt: draft.startAt,
+        endAt: draft.endAt,
+        status: draft.status,
+        source: 'local',
+        qrToken: '',
+      };
+      booking.qrToken = createQrToken(booking.id, booking.equipmentId, booking.startAt);
+      setDataset((current) => {
+        const bookings = [...current.bookings, booking];
+        return { ...current, bookings, resources: syncResourceStatuses(current.resources, bookings) };
+      });
+      pushToast(createToast('success', 'Booking created', `${resource.name} ${resource.unitId} is reserved.${persistenceNote(dataset.source)}`));
+    },
+    [dataset, pushToast],
+  );
+
+  const cancelBooking = useCallback(
+    async (bookingId: string, reason = 'Booking cancelled; cascade evaluated the freed slot.', actor = 'Campus Scheduler') => {
+      let toast: ToastMessage | null = null;
+      setDataset((current) => {
+        const cancelled = current.bookings.find((booking) => booking.id === bookingId);
+        if (!cancelled) return current;
+        const bookings = current.bookings.map((booking) => (booking.id === bookingId ? { ...booking, status: 'cancelled' as BookingStatus } : booking));
+        const withCancelled = {
+          ...current,
+          bookings,
+          resources: syncResourceStatuses(current.resources, bookings),
+          auditLog: [createAudit('booking-cancelled', `${cancelled.equipmentName} ${cancelled.unitId}`, reason, actor), ...current.auditLog],
+        };
+        const result = activateNextOffer(withCancelled, cancelled.equipmentId, cancelled.startAt, cancelled.endAt, reason, 'Cascade Engine');
+        toast = result.toast;
+        return result.dataset;
+      });
+      if (toast) pushToast(toast);
+    },
+    [pushToast],
+  );
+
+  const joinWaitlist = useCallback(
+    async (draft: WaitlistDraft) => {
+      const resource = dataset.resources.find((item) => item.id === draft.equipmentId);
+      if (!resource) throw new Error('Selected equipment could not be found.');
+      if (new Date(draft.requestedEndAt) <= new Date(draft.requestedStartAt)) throw new Error('Requested end time must be after start time.');
+
+      const entry: WaitlistEntry = {
+        id: `wait-${crypto.randomUUID()}`,
+        equipmentId: resource.id,
+        equipmentName: resource.name,
+        unitId: resource.unitId,
+        buildingName: resource.buildingName,
+        requestedStartAt: draft.requestedStartAt,
+        requestedEndAt: draft.requestedEndAt,
+        userName: draft.userName,
+        userRole: draft.userRole,
+        urgency: draft.urgency,
+        noShowPenalty: draft.noShowPenalty,
+        priorityScore: calculatePriorityScore(draft.userRole, draft.urgency, draft.noShowPenalty),
+        status: 'waiting',
+        createdAt: new Date().toISOString(),
+        notes: draft.notes,
+      };
+
+      setDataset((current) => {
+        const entries = [...current.waitlistEntries, entry];
+        return {
+          ...current,
+          waitlistEntries: entries,
+          waitlistPressure: buildWaitlistPressure(entries),
+        };
+      });
+      pushToast(createToast('success', 'Joined waitlist', `${entry.userName} entered the ${resource.name} queue with priority ${entry.priorityScore}.`));
+    },
+    [dataset.resources, pushToast],
+  );
+
+  const acceptWaitlistOffer = useCallback(
+    async (entryId: string) => {
+      let toast: ToastMessage | null = null;
+      setDataset((current) => {
+        const entry = current.waitlistEntries.find((item) => item.id === entryId);
+        if (!entry || entry.status !== 'offered' || !entry.offeredStartAt || !entry.offeredEndAt) return current;
+        if (new Date(entry.offerExpiresAt ?? '').getTime() <= Date.now()) {
+          const expired = current.waitlistEntries.map((item) => (item.id === entryId ? { ...item, status: 'expired' as const } : item));
+          const result = activateNextOffer({ ...current, waitlistEntries: expired, waitlistPressure: buildWaitlistPressure(expired) }, entry.equipmentId, entry.offeredStartAt, entry.offeredEndAt, 'Previous waitlist offer expired.', 'Cascade Engine');
+          toast = result.toast;
+          return result.dataset;
+        }
+        if (isUnderMaintenance(current.bookings, current.resources, entry.equipmentId, entry.offeredStartAt, entry.offeredEndAt)) {
+          toast = createToast('error', 'Offer blocked', 'Maintenance safety prevents this offer from becoming a booking.');
+          return current;
+        }
+        if (hasEquipmentConflict(current.bookings, entry.equipmentId, entry.offeredStartAt, entry.offeredEndAt)) {
+          toast = createToast('error', 'Offer conflict', 'Another confirmed booking now occupies this slot.');
+          return current;
+        }
+
+        const resource = current.resources.find((item) => item.id === entry.equipmentId);
+        if (!resource) return current;
+        const booking: BookingRecord = {
+          id: `local-${crypto.randomUUID()}`,
+          equipmentId: resource.id,
+          equipmentName: resource.name,
+          unitId: resource.unitId,
+          category: resource.category,
+          buildingId: resource.buildingId,
+          buildingName: resource.buildingName,
+          requesterName: entry.userName,
+          requesterRole: entry.userRole,
+          purpose: entry.notes || 'Accepted waitlist cascade offer',
+          startAt: entry.offeredStartAt,
+          endAt: entry.offeredEndAt,
+          status: 'confirmed',
+          source: 'local',
+          qrToken: '',
+        };
+        booking.qrToken = createQrToken(booking.id, booking.equipmentId, booking.startAt);
+        const entries = current.waitlistEntries.map((item) => (item.id === entryId ? { ...item, status: 'booked' as const } : item));
+        const bookings = [...current.bookings, booking];
+        toast = createToast('success', 'Offer accepted', `${entry.userName} now has the freed ${resource.name} slot.`);
+        return {
+          ...current,
+          bookings,
+          resources: syncResourceStatuses(current.resources, bookings),
+          waitlistEntries: entries,
+          waitlistPressure: buildWaitlistPressure(entries),
+          auditLog: [createAudit('waitlist-accepted', `${entry.userName} · ${resource.name}`, 'Waitlist user accepted the 10-minute offer window.', 'Cascade Engine'), ...current.auditLog],
+        };
+      });
+      if (toast) pushToast(toast);
+    },
+    [pushToast],
+  );
+
+  const advanceWaitlistOffer = useCallback(
+    async (entryId: string, status: 'declined' | 'expired') => {
+      let toast: ToastMessage | null = null;
+      setDataset((current) => {
+        const entry = current.waitlistEntries.find((item) => item.id === entryId);
+        if (!entry || !entry.offeredStartAt || !entry.offeredEndAt) return current;
+        const entries = current.waitlistEntries.map((item) => (item.id === entryId ? { ...item, status } : item));
+        const action = status === 'declined' ? 'waitlist-declined' : 'waitlist-expired';
+        const result = activateNextOffer(
+          {
+            ...current,
+            waitlistEntries: entries,
+            waitlistPressure: buildWaitlistPressure(entries),
+            auditLog: [createAudit(action, `${entry.userName} · ${entry.equipmentName}`, `Offer ${status}; cascade moved to the next eligible entry.`, 'Cascade Engine'), ...current.auditLog],
+          },
+          entry.equipmentId,
+          entry.offeredStartAt,
+          entry.offeredEndAt,
+          `Previous offer ${status}.`,
+          'Cascade Engine',
+        );
+        toast = result.toast;
+        return result.dataset;
+      });
+      if (toast) pushToast(toast);
+    },
+    [pushToast],
+  );
+
+  const declineWaitlistOffer = useCallback((entryId: string) => advanceWaitlistOffer(entryId, 'declined'), [advanceWaitlistOffer]);
+  const expireWaitlistOffer = useCallback((entryId: string) => advanceWaitlistOffer(entryId, 'expired'), [advanceWaitlistOffer]);
+
+  const cancelWaitlistEntry = useCallback(
+    async (entryId: string) => {
+      setDataset((current) => {
+        const entries = current.waitlistEntries.map((entry) => (entry.id === entryId ? { ...entry, status: 'cancelled' as const } : entry));
+        return { ...current, waitlistEntries: entries, waitlistPressure: buildWaitlistPressure(entries) };
+      });
+      pushToast(createToast('info', 'Waitlist entry cancelled', 'The queue was re-ranked immediately.'));
+    },
+    [pushToast],
+  );
+
+  const applyAdminOverride = useCallback(
+    async (draft: AdminOverrideDraft) => {
+      if (!draft.reason.trim()) throw new Error('A reason is required for every admin action.');
+      if (!draft.actor.trim()) throw new Error('An actor is required for every admin action.');
+      let toast: ToastMessage | null = null;
+
+      setDataset((current) => {
+        const audit = createAudit(draft.action, draft.targetId, draft.reason, draft.actor || 'Demo Admin');
+        if (draft.action === 'group-target') {
+          const booking = current.bookings.find((item) => item.id === draft.targetId);
+          if (!booking) {
+            toast = createToast('error', 'Target missing', 'The selected booking target no longer exists.');
+            return current;
+          }
+          const groupedBookingIds = new Set(
+            current.bookings
+              .filter(
+                (item) =>
+                  item.equipmentId === booking.equipmentId &&
+                  item.status !== 'cancelled' &&
+                  item.status !== 'checked-out' &&
+                  hasIntervalOverlap(item.startAt, item.endAt, booking.startAt, booking.endAt),
+              )
+              .map((item) => item.id),
+          );
+          if (groupedBookingIds.size === 0) groupedBookingIds.add(booking.id);
+          const bookings = current.bookings.map((item) =>
+            groupedBookingIds.has(item.id) && item.status !== 'maintenance' ? { ...item, status: 'pending' as BookingStatus } : item,
+          );
+          toast = createToast('info', 'Targets grouped', `${groupedBookingIds.size} related ${booking.equipmentName} booking target${groupedBookingIds.size === 1 ? '' : 's'} moved to admin review.${persistenceNote(current.source)}`);
+          return {
+            ...current,
+            bookings,
+            resources: syncResourceStatuses(current.resources, bookings),
+            auditLog: [
+              {
+                ...audit,
+                target: `${booking.equipmentName} ${booking.unitId}`,
+                reason: `${draft.reason} Grouped ${groupedBookingIds.size} overlapping or related target${groupedBookingIds.size === 1 ? '' : 's'} for review.`,
+              },
+              ...current.auditLog,
+            ],
+          };
+        }
+
+        if (draft.action === 'approve-request') {
+          const booking = current.bookings.find((item) => item.id === draft.targetId);
+          if (!booking) {
+            toast = createToast('error', 'Target missing', 'The selected booking target no longer exists.');
+            return current;
+          }
+          if (booking.status === 'cancelled' || booking.status === 'checked-out' || booking.status === 'maintenance') {
+            toast = createToast('error', 'Approval blocked', `A ${booking.status} record cannot be approved as a user booking.`);
+            return current;
+          }
+          if (isUnderMaintenance(current.bookings, current.resources, booking.equipmentId, booking.startAt, booking.endAt)) {
+            toast = createToast('error', 'Approval blocked', 'Maintenance safety prevents approving this request.');
+            return current;
+          }
+          if (hasEquipmentConflict(current.bookings, booking.equipmentId, booking.startAt, booking.endAt, booking.id, ['confirmed', 'in-use', 'checked-in', 'maintenance'])) {
+            toast = createToast('error', 'Approval blocked', 'Approving this request would overlap another active booking.');
+            return current;
+          }
+          if (booking.status === 'confirmed') {
+            toast = createToast('info', 'Already approved', `${booking.equipmentName} ${booking.unitId} is already confirmed.${persistenceNote(current.source)}`);
+            return { ...current, auditLog: [{ ...audit, target: `${booking.equipmentName} ${booking.unitId}` }, ...current.auditLog] };
+          }
+          toast = createToast('success', 'Request approved', `${booking.equipmentName} request is now confirmed.${persistenceNote(current.source)}`);
+          const bookings = current.bookings.map((item) => (item.id === draft.targetId ? { ...item, status: 'confirmed' as BookingStatus } : item));
+          return {
+            ...current,
+            bookings,
+            resources: syncResourceStatuses(current.resources, bookings),
+            auditLog: [{ ...audit, target: `${booking.equipmentName} ${booking.unitId}` }, ...current.auditLog],
+          };
+        }
+
+        if (draft.action === 'reject-request' || draft.action === 'resolve-conflict') {
+          const booking = current.bookings.find((item) => item.id === draft.targetId);
+          if (!booking) {
+            toast = createToast('error', 'Target missing', 'The selected booking target no longer exists.');
+            return current;
+          }
+          if (booking.status === 'cancelled' || booking.status === 'checked-out') {
+            toast = createToast('info', 'No active change', `${booking.equipmentName} ${booking.unitId} is already ${booking.status}.`);
+            return { ...current, auditLog: [{ ...audit, target: `${booking.equipmentName} ${booking.unitId}` }, ...current.auditLog] };
+          }
+          if (booking.status === 'maintenance') {
+            toast = createToast('error', 'Use maintenance clear', 'Maintenance records must be cleared from the Maintenance Safety control.');
+            return current;
+          }
+          const hasConflict = current.bookings.some(
+            (item) =>
+              item.id !== booking.id &&
+              item.equipmentId === booking.equipmentId &&
+              ['confirmed', 'pending', 'in-use', 'checked-in', 'maintenance'].includes(item.status) &&
+              hasIntervalOverlap(item.startAt, item.endAt, booking.startAt, booking.endAt),
+          );
+          if (draft.action === 'resolve-conflict' && !hasConflict) {
+            toast = createToast('info', 'No conflict found', `${booking.equipmentName} ${booking.unitId} does not currently overlap another active booking.`);
+            return { ...current, auditLog: [{ ...audit, target: `${booking.equipmentName} ${booking.unitId}` }, ...current.auditLog] };
+          }
+          toast = createToast('warning', draft.action === 'reject-request' ? 'Request rejected' : 'Conflict resolved', `${booking.equipmentName} booking was cancelled.${persistenceNote(current.source)}`);
+          const bookings = current.bookings.map((item) => (item.id === draft.targetId ? { ...item, status: 'cancelled' as BookingStatus } : item));
+          const next = {
+            ...current,
+            bookings,
+            resources: syncResourceStatuses(current.resources, bookings),
+            auditLog: [{ ...audit, target: `${booking.equipmentName} ${booking.unitId}` }, ...current.auditLog],
+          };
+          if (draft.action === 'resolve-conflict') {
+            const result = activateNextOffer(next, booking.equipmentId, booking.startAt, booking.endAt, draft.reason, draft.actor || 'Demo Admin');
+            if (result.toast.tone === 'success') toast = result.toast;
+            return { ...result.dataset, resources: syncResourceStatuses(result.dataset.resources, result.dataset.bookings) };
+          }
+          return next;
+        }
+
+        if (draft.action === 'maintenance-block' && draft.equipmentId && draft.startAt && draft.endAt) {
+          const resource = current.resources.find((item) => item.id === draft.equipmentId);
+          if (!resource) {
+            toast = createToast('error', 'Equipment missing', 'The selected equipment target no longer exists.');
+            return current;
+          }
+          if (new Date(draft.endAt) <= new Date(draft.startAt)) {
+            toast = createToast('error', 'Maintenance blocked', 'Maintenance end time must be after the start time.');
+            return current;
+          }
+          if (hasEquipmentConflict(current.bookings, resource.id, draft.startAt, draft.endAt, undefined, ['confirmed', 'pending', 'in-use', 'checked-in'])) {
+            toast = createToast('error', 'Maintenance blocked', 'Maintenance cannot be placed over an active or pending booking.');
+            return current;
+          }
+          if (hasEquipmentConflict(current.bookings, resource.id, draft.startAt, draft.endAt, undefined, ['maintenance'])) {
+            toast = createToast('info', 'Maintenance already active', `${resource.name} already has a maintenance block in that interval.`);
+            return { ...current, auditLog: [{ ...audit, target: `${resource.name} ${resource.unitId}` }, ...current.auditLog] };
+          }
+          const maintenanceBooking: BookingRecord = {
+            id: `maintenance-${crypto.randomUUID()}`,
+            equipmentId: resource.id,
+            equipmentName: resource.name,
+            unitId: resource.unitId,
+            category: resource.category,
+            buildingId: resource.buildingId,
+            buildingName: resource.buildingName,
+            requesterName: draft.actor || 'Demo Admin',
+            requesterRole: 'Admin',
+            purpose: `Maintenance block: ${draft.reason}`,
+            startAt: draft.startAt,
+            endAt: draft.endAt,
+            status: 'maintenance',
+            source: 'local',
+            qrToken: '',
+          };
+          maintenanceBooking.qrToken = createQrToken(maintenanceBooking.id, maintenanceBooking.equipmentId, maintenanceBooking.startAt);
+          const bookings = [...current.bookings, maintenanceBooking];
+          toast = createToast('warning', 'Maintenance block added', `${resource.name} is blocked for safety.${persistenceNote(current.source)}`);
+          return {
+            ...current,
+            resources: syncResourceStatuses(current.resources, bookings),
+            bookings,
+            auditLog: [{ ...audit, target: `${resource.name} ${resource.unitId}` }, ...current.auditLog],
+          };
+        }
+
+        if (draft.action === 'maintenance-clear' && draft.equipmentId) {
+          const resource = current.resources.find((item) => item.id === draft.equipmentId);
+          if (!resource) {
+            toast = createToast('error', 'Equipment missing', 'The selected equipment target no longer exists.');
+            return current;
+          }
+          const hasMaintenance = current.bookings.some((booking) => booking.equipmentId === resource.id && booking.status === 'maintenance');
+          if (!hasMaintenance) {
+            toast = createToast('info', 'No maintenance block', `${resource.name} does not have an active maintenance block.`);
+            return { ...current, auditLog: [{ ...audit, target: `${resource.name} ${resource.unitId}` }, ...current.auditLog] };
+          }
+          const bookings = current.bookings.map((booking) => (booking.equipmentId === resource.id && booking.status === 'maintenance' ? { ...booking, status: 'cancelled' as BookingStatus } : booking));
+          toast = createToast('success', 'Maintenance cleared', `${resource.name} is available for future safe bookings.${persistenceNote(current.source)}`);
+          return {
+            ...current,
+            resources: syncResourceStatuses(current.resources, bookings),
+            bookings,
+            auditLog: [{ ...audit, target: `${resource.name} ${resource.unitId}` }, ...current.auditLog],
+          };
+        }
+
+        if (draft.action === 'override-decision' && draft.equipmentId && draft.startAt && draft.endAt) {
+          const resource = current.resources.find((item) => item.id === draft.equipmentId);
+          if (!resource) {
+            toast = createToast('error', 'Equipment missing', 'The selected equipment target no longer exists.');
+            return current;
+          }
+          if (new Date(draft.endAt) <= new Date(draft.startAt)) {
+            toast = createToast('error', 'Cascade blocked', 'Cascade end time must be after the start time.');
+            return current;
+          }
+          const result = activateNextOffer(current, draft.equipmentId, draft.startAt, draft.endAt, draft.reason, draft.actor || 'Demo Admin');
+          toast = result.toast;
+          return {
+            ...result.dataset,
+            resources: syncResourceStatuses(result.dataset.resources, result.dataset.bookings),
+            auditLog: [audit, ...result.dataset.auditLog],
+          };
+        }
+
+        return { ...current, auditLog: [audit, ...current.auditLog] };
+      });
+
+      if (toast) pushToast(toast);
+    },
+    [pushToast],
+  );
+
+  const checkInBooking = useCallback(
+    async (payload: string, actor = 'Demo borrower') => {
+      const parsed = parseQrToken(payload);
+      if (!parsed) throw new Error('Invalid GearGrid QR payload.');
+
+      let toast: ToastMessage | null = null;
+      setDataset((current) => {
+        const booking = current.bookings.find((item) => item.id === parsed.bookingId);
+        if (!booking || booking.equipmentId !== parsed.equipmentId || booking.startAt !== parsed.startAt || booking.qrToken !== payload.trim()) {
+          toast = createToast('error', 'Invalid QR scan', 'This QR code does not match an active GearGrid booking.');
+          return current;
+        }
+        if (!['confirmed', 'in-use'].includes(booking.status)) {
+          toast = createToast('error', 'Check-in blocked', `Booking status is ${booking.status}.`);
+          return current;
+        }
+        if (booking.checkedInAt) {
+          toast = createToast('warning', 'Already checked in', `${booking.equipmentName} ${booking.unitId} was already checked in.`);
+          return current;
+        }
+        const now = Date.now();
+        const starts = new Date(booking.startAt).getTime();
+        const ends = new Date(booking.endAt).getTime();
+        if (now < starts - 15 * 60_000 || now > ends) {
+          toast = createToast('error', 'Outside booking window', 'Check-in opens 15 minutes before the booking and closes at the scheduled end time.');
+          return current;
+        }
+        const checkedInAt = new Date().toISOString();
+        const bookings = current.bookings.map((item) =>
+          item.id === booking.id ? { ...item, status: 'checked-in' as BookingStatus, checkedInAt } : item,
+        );
+        toast = createToast('success', 'Check-in complete', `${booking.equipmentName} ${booking.unitId} is now checked in.`);
+        return {
+          ...current,
+          bookings,
+          resources: syncResourceStatuses(current.resources, bookings),
+          auditLog: [createAudit('override-decision', `${booking.equipmentName} ${booking.unitId}`, `QR check-in recorded by ${actor}.`, 'QR Demo'), ...current.auditLog],
+        };
+      });
+      if (toast) pushToast(toast);
+    },
+    [pushToast],
+  );
+
+  const checkOutBooking = useCallback(
+    async (payload: string, actor = 'Demo borrower') => {
+      const parsed = parseQrToken(payload);
+      if (!parsed) throw new Error('Invalid GearGrid QR payload.');
+
+      let toast: ToastMessage | null = null;
+      setDataset((current) => {
+        const booking = current.bookings.find((item) => item.id === parsed.bookingId);
+        if (!booking || booking.equipmentId !== parsed.equipmentId || booking.startAt !== parsed.startAt || booking.qrToken !== payload.trim()) {
+          toast = createToast('error', 'Invalid QR scan', 'This QR code does not match a GearGrid booking.');
+          return current;
+        }
+        if (!booking.checkedInAt) {
+          toast = createToast('error', 'Check-out blocked', 'This booking has not been checked in yet.');
+          return current;
+        }
+        if (booking.checkedOutAt || booking.status === 'checked-out') {
+          toast = createToast('warning', 'Already checked out', `${booking.equipmentName} ${booking.unitId} was already returned.`);
+          return current;
+        }
+        if (booking.status !== 'checked-in') {
+          toast = createToast('error', 'Unauthorized check-out', 'Only a checked-in booking can be checked out in this demo.');
+          return current;
+        }
+        const checkedOutAt = new Date().toISOString();
+        const bookings = current.bookings.map((item) =>
+          item.id === booking.id ? { ...item, status: 'checked-out' as BookingStatus, checkedOutAt } : item,
+        );
+        toast = createToast('success', 'Check-out complete', `${booking.equipmentName} ${booking.unitId} has been returned.`);
+        return {
+          ...current,
+          bookings,
+          resources: syncResourceStatuses(current.resources, bookings),
+          auditLog: [createAudit('override-decision', `${booking.equipmentName} ${booking.unitId}`, `QR check-out recorded by ${actor}.`, 'QR Demo'), ...current.auditLog],
+        };
+      });
+      if (toast) pushToast(toast);
+    },
+    [pushToast],
+  );
+
+  return useMemo(
+    () => ({
+      ...dataset,
+      loading,
+      error,
+      toasts,
+      refresh,
+      createBooking,
+      cancelBooking,
+      joinWaitlist,
+      acceptWaitlistOffer,
+      declineWaitlistOffer,
+      expireWaitlistOffer,
+      cancelWaitlistEntry,
+      applyAdminOverride,
+      checkInBooking,
+      checkOutBooking,
+      dismissToast,
+      offerWindowMs: OFFER_WINDOW_MS,
+      priorityFormula,
+    }),
+    [
+      acceptWaitlistOffer,
+      applyAdminOverride,
+      cancelBooking,
+      cancelWaitlistEntry,
+      checkInBooking,
+      checkOutBooking,
+      createBooking,
+      dataset,
+      declineWaitlistOffer,
+      dismissToast,
+      error,
+      expireWaitlistOffer,
+      joinWaitlist,
+      loading,
+      refresh,
+      toasts,
+    ],
+  );
+};
