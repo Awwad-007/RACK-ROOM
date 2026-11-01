@@ -15,7 +15,7 @@ RACK-ROOM aims to solve this by pairing an interactive 3D campus digital twin wi
 
 ## Implementation Roadmap
 - [x] Workspace scaffolding, build tooling, and dependency wiring
-- [ ] Domain data models and TypeScript schema contracts (`src/types/`)
+- [x] Domain data models and TypeScript schema contracts (`src/types/`)
 - [ ] Core scheduling engine and clash prevention algorithms (`src/engine/`)
 - [ ] Central state store and mock campus lab inventory (`src/store/`, `src/data/`)
 - [ ] Isometric 3D campus canvas and rooftop unit pins (`src/scene/`)
@@ -39,3 +39,6 @@ npm install
 # Start development server
 npm run dev
 ```
+
+---
+*Current Project Phase: Milestone 1 complete. Core conflict engine in progress.*
