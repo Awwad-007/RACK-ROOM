@@ -101,7 +101,7 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 - [x] Foundation & project scaffolding (`package.json`, `tsconfig.json`, `tailwind.config.js`)
 - [x] Core Scheduling Engine & schema migrations (`src/lib/`, `src/types/`, `supabase/`)
 - [x] Central state store and mock campus lab inventory (`src/store/`, `src/data/`, `src/utils/`)
-- [ ] 3D isometric campus twin (`src/scene/`)
+- [x] 3D isometric campus twin (`src/scene/`, `public/assets/`)
 - [ ] UI components and interactive dashboards (`src/components/`, `src/App.tsx`)
 
 ### Core Scheduling Engine (Milestone 2)
@@ -116,7 +116,13 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 - Mock campus inventory representing engineering blocks, maker spaces, and computing clusters.
 - Algorithmic utility helpers: reservation demand forecasting, utilization heatmaps, and QR verification matrix.
 
-*Current Project Phase: Milestone 3 complete. 3D isometric campus twin in progress.*
+### Spatial 3D Twin (Milestone 4)
+- Interactive isometric canvas powered by React Three Fiber & Drei.
+- Procedural campus block geometry, ground plane grid, and dynamic lighting.
+- Equipment pins displaying real-time occupancy and hover states over campus wings.
+- Custom 3D viewport camera controller with responsive framing.
+
+*Current Project Phase: Milestone 4 complete. Core UI dashboards & application shell in progress.*
 
 ---
 
