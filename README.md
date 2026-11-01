@@ -16,10 +16,15 @@ RACK-ROOM aims to solve this by pairing an interactive 3D campus digital twin wi
 ## Implementation Roadmap
 - [x] Workspace scaffolding, build tooling, and dependency wiring
 - [x] Domain data models and TypeScript schema contracts (`src/types/`)
-- [ ] Core scheduling engine and clash prevention algorithms (`src/engine/`)
+- [x] Core scheduling engine and clash prevention algorithms (`src/engine/`)
 - [ ] Central state store and mock campus lab inventory (`src/store/`, `src/data/`)
 - [ ] Isometric 3D campus canvas and rooftop unit pins (`src/scene/`)
 - [ ] Booking drawer, Gantt timeline, and check-in telemetry (`src/components/`)
+
+### Engine Capabilities
+- Interval clash detection via `(startA < endB) && (endA > startB)`.
+- Grace window management (-10m pre-booking to +15m check-in timeout).
+- Multi-factor priority queue scoring for waitlisted equipment requests.
 
 ## Getting Started
 
@@ -41,4 +46,4 @@ npm run dev
 ```
 
 ---
-*Current Project Phase: Milestone 1 complete. Core conflict engine in progress.*
+*Current Project Phase: Milestone 2 complete. Global state store & mock inventory in progress.*
