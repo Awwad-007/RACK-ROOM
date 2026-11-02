@@ -12,7 +12,7 @@ export const SciFiHeader: React.FC = () => {
           <div className="flex items-center space-x-2">
             <span className="text-cyan-400/70 font-mono text-xs tracking-tighter">[</span>
             <h1 className="text-sm md:text-base font-semibold tracking-wider uppercase text-slate-100 font-sans drop-shadow-[0_0_8px_rgba(255,255,255,0.6)]">
-              ZeroClash
+              RACK-ROOM
             </h1>
             <span className="text-cyan-400/70 font-mono text-xs tracking-tighter">]</span>
           </div>

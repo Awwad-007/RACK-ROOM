@@ -19,13 +19,13 @@ export const App: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [theme, setTheme] = useState<AppTheme>(
-    () => ((localStorage.getItem('geargrid-theme') ?? localStorage.getItem('zeroclash-theme')) as AppTheme | null) ?? 'dark',
+    () => ((localStorage.getItem('rackroom-theme') ?? localStorage.getItem('zeroclash-theme')) as AppTheme | null) ?? 'dark',
   );
   const heatmapRange: HeatmapRange = 'week';
   const scheduling = useSchedulingData();
 
   useEffect(() => {
-    localStorage.setItem('geargrid-theme', theme);
+    localStorage.setItem('rackroom-theme', theme);
     document.documentElement.dataset.theme = theme;
     document.documentElement.classList.toggle('theme-light', theme === 'light');
     document.documentElement.classList.toggle('theme-dark', theme === 'dark');

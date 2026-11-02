@@ -71,11 +71,11 @@ export const MyBookingsQRCode: React.FC<MyBookingsQRCodeProps> = ({ bookings, on
     if (directBooking) return { booking: directBooking, payload: directBooking.qrToken };
 
     const parsed = parseQrToken(trimmed);
-    if (!parsed) return { error: 'Invalid ZeroClash QR payload or booking ID.' };
+    if (!parsed) return { error: 'Invalid RACK-ROOM QR payload or booking ID.' };
 
     const booking = bookings.find((item) => item.id === parsed.bookingId);
     if (!booking || booking.equipmentId !== parsed.equipmentId || booking.startAt !== parsed.startAt || booking.qrToken !== trimmed) {
-      return { error: 'This QR code does not match an active ZeroClash booking.' };
+      return { error: 'This QR code does not match an active RACK-ROOM booking.' };
     }
     return { booking, payload: trimmed };
   };
@@ -144,7 +144,7 @@ export const MyBookingsQRCode: React.FC<MyBookingsQRCodeProps> = ({ bookings, on
       const detector = new BarcodeDetectorCtor({ formats: ['qr_code'] });
       setCameraActive(true);
       setScanTone('info');
-      setScanStatus('Camera active. Point it at a ZeroClash QR code.');
+      setScanStatus('Camera active. Point it at a RACK-ROOM QR code.');
 
       const scan = async () => {
         if (!videoRef.current || scanSessionRef.current !== session) return;

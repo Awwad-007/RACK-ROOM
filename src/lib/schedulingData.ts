@@ -873,13 +873,13 @@ export const useSchedulingData = () => {
   const checkInBooking = useCallback(
     async (payload: string, actor = 'Demo borrower') => {
       const parsed = parseQrToken(payload);
-      if (!parsed) throw new Error('Invalid GearGrid QR payload.');
+      if (!parsed) throw new Error('Invalid RACK-ROOM QR payload.');
 
       let toast: ToastMessage | null = null;
       setDataset((current) => {
         const booking = current.bookings.find((item) => item.id === parsed.bookingId);
         if (!booking || booking.equipmentId !== parsed.equipmentId || booking.startAt !== parsed.startAt || booking.qrToken !== payload.trim()) {
-          toast = createToast('error', 'Invalid QR scan', 'This QR code does not match an active GearGrid booking.');
+          toast = createToast('error', 'Invalid QR scan', 'This QR code does not match an active RACK-ROOM booking.');
           return current;
         }
         if (!['confirmed', 'in-use'].includes(booking.status)) {
@@ -917,13 +917,13 @@ export const useSchedulingData = () => {
   const checkOutBooking = useCallback(
     async (payload: string, actor = 'Demo borrower') => {
       const parsed = parseQrToken(payload);
-      if (!parsed) throw new Error('Invalid GearGrid QR payload.');
+      if (!parsed) throw new Error('Invalid RACK-ROOM QR payload.');
 
       let toast: ToastMessage | null = null;
       setDataset((current) => {
         const booking = current.bookings.find((item) => item.id === parsed.bookingId);
         if (!booking || booking.equipmentId !== parsed.equipmentId || booking.startAt !== parsed.startAt || booking.qrToken !== payload.trim()) {
-          toast = createToast('error', 'Invalid QR scan', 'This QR code does not match a GearGrid booking.');
+          toast = createToast('error', 'Invalid QR scan', 'This QR code does not match a RACK-ROOM booking.');
           return current;
         }
         if (!booking.checkedInAt) {
