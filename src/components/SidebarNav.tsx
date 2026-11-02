@@ -104,8 +104,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed, onCollapsedCh
       >
         <div className="flex h-20 items-center justify-between border-b border-[var(--border)] px-4">
           <div className={`min-w-0 transition-opacity ${collapsed ? 'lg:opacity-0' : 'opacity-100'}`}>
-            <div className="text-xs font-mono uppercase tracking-[0.24em] text-cyan-500">GearGrid</div>
-            <div className="mt-1 truncate text-sm font-semibold text-[var(--text)]">Smart Campus Hub</div>
+            <div className="text-xs font-mono uppercase tracking-[0.24em] text-cyan-500">ZeroClash</div>
+            <div className="mt-1 truncate text-sm font-semibold text-[var(--text)]">ZeroClash</div>
           </div>
           <div className="flex items-center gap-1">
             <button

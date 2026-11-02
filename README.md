@@ -103,7 +103,7 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 - [x] Central state store and mock campus lab inventory (`src/store/`, `src/data/`, `src/utils/`)
 - [x] 3D isometric campus twin (`src/scene/`, `public/assets/`)
 - [x] Algorithmic verification and engine unit test suites (`src/test/`)
-- [ ] UI components and interactive dashboards (`src/components/`, `src/App.tsx`)
+- [x] Interactive UI suite, Gantt booking calendar, and telemetry dashboards (`src/components/`)
 
 ### Core Scheduling Engine (Milestone 2)
 - ZeroClash concurrency and interval clash detection via `(startA < endB) && (endA > startB)`.
@@ -128,7 +128,12 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 - Validation tests for dynamic grace check-in timeout windows and waitlist priority sorting.
 - Mathematical testing for reservation forecasting and QR token verification matrices.
 
-*Current Project Phase: Core logic verified via unit tests. UI components and app shell in progress.*
+### UI Components & Views (Milestone 6)
+- Gantt booking calendar, interactive equipment catalog, and modal drawers.
+- Live QR pass verification, waitlist cascade dashboard, and admin override controls.
+- Demand intelligence analytics view and mini lab-assistant chatbot interface.
+
+*Current Project Phase: Milestone 6 complete. Application entry wiring, global styles, and database migrations in final rollout.*
 
 ---
 

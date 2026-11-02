@@ -46,7 +46,7 @@ const answerFromLocalData = (question: string, { resources, bookings }: ChatbotC
   }
 
   if (normalized.includes('conflict') || normalized.includes('overlap')) {
-    return `The GearGrid Core Scheduling Engine blocks overlapping active bookings for the same equipment. The current schedule has ${activeBookings.length} active booking records across ${resources.length} units.`;
+    return `ZeroClash blocks overlapping active bookings for the same equipment. The current schedule has ${activeBookings.length} active booking records across ${resources.length} units.`;
   }
 
   if (normalized.includes('qr') || normalized.includes('check-in') || normalized.includes('check out') || normalized.includes('checkout')) {
@@ -102,7 +102,7 @@ export const MiniChatbot: React.FC<MiniChatbotProps> = ({ resources, bookings, o
                 <Bot className="h-4 w-4" />
               </span>
               <div>
-                <div className="text-sm font-semibold text-[var(--text)]">GearGrid Assistant</div>
+                <div className="text-sm font-semibold text-[var(--text)]">ZeroClash Assistant</div>
                 <div className="text-[11px] text-[var(--muted)]">Campus booking help</div>
               </div>
             </div>
@@ -175,8 +175,8 @@ export const MiniChatbot: React.FC<MiniChatbotProps> = ({ resources, bookings, o
           window.setTimeout(() => inputRef.current?.focus(), 50);
         }}
         className="ml-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-400/30 bg-cyan-400 text-slate-950 shadow-[0_14px_40px_rgba(34,211,238,0.28)] transition hover:-translate-y-0.5 hover:bg-cyan-300"
-        title="Open GearGrid assistant"
-        aria-label="Open GearGrid assistant"
+        title="Open ZeroClash assistant"
+        aria-label="Open ZeroClash assistant"
       >
         <MessageCircle className="h-5 w-5" />
       </button>
