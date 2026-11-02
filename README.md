@@ -98,12 +98,14 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 
 ## Implementation Roadmap
 
-- [x] Foundation & project scaffolding (`package.json`, `tsconfig.json`, `tailwind.config.js`)
-- [x] Core Scheduling Engine & schema migrations (`src/lib/`, `src/types/`, `supabase/`)
+- [x] Workspace scaffolding, build tooling, and dependency wiring
+- [x] Domain data models and TypeScript schema contracts (`src/types/`)
+- [x] Core scheduling engine and clash prevention algorithms (`src/engine/`, `src/lib/`)
 - [x] Central state store and mock campus lab inventory (`src/store/`, `src/data/`, `src/utils/`)
-- [x] 3D isometric campus twin (`src/scene/`, `public/assets/`)
+- [x] Isometric 3D campus canvas and rooftop unit pins (`src/scene/`, `public/assets/`)
 - [x] Algorithmic verification and engine unit test suites (`src/test/`)
 - [x] Interactive UI suite, Gantt booking calendar, and telemetry dashboards (`src/components/`)
+- [x] Root application wiring, glassmorphism design tokens, and database migrations (`src/App.tsx`, `src/main.tsx`, `supabase/`)
 
 ### Core Scheduling Engine (Milestone 2)
 - ZeroClash concurrency and interval clash detection via `(startA < endB) && (endA > startB)`.
@@ -133,7 +135,12 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 - Live QR pass verification, waitlist cascade dashboard, and admin override controls.
 - Demand intelligence analytics view and mini lab-assistant chatbot interface.
 
-*Current Project Phase: Milestone 6 complete. Application entry wiring, global styles, and database migrations in final rollout.*
+### Application Shell, Styling & Database (Production Milestone)
+- Root application container wiring, reactive navigation shell, and theme switcher (`src/App.tsx`, `src/main.tsx`).
+- Cyberpunk design system, responsive glassmorphism CSS tokens, and Tailwind directives (`src/index.css`).
+- Production Supabase SQL schema migrations and advisory concurrency locking functions (`supabase/migrations/`).
+
+*Current Project Phase: Production release complete. Ready for deployment.*
 
 ---
 
