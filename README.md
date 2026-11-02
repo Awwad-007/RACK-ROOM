@@ -102,6 +102,7 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 - [x] Core Scheduling Engine & schema migrations (`src/lib/`, `src/types/`, `supabase/`)
 - [x] Central state store and mock campus lab inventory (`src/store/`, `src/data/`, `src/utils/`)
 - [x] 3D isometric campus twin (`src/scene/`, `public/assets/`)
+- [x] Algorithmic verification and engine unit test suites (`src/test/`)
 - [ ] UI components and interactive dashboards (`src/components/`, `src/App.tsx`)
 
 ### Core Scheduling Engine (Milestone 2)
@@ -122,7 +123,12 @@ Shared university laboratories, maker spaces, and media facilities frequently ex
 - Equipment pins displaying real-time occupancy and hover states over campus wings.
 - Custom 3D viewport camera controller with responsive framing.
 
-*Current Project Phase: Milestone 4 complete. Core UI dashboards & application shell in progress.*
+### Test Suite & Validation (Milestone 4.5)
+- Unit test coverage for deterministic interval collision math and edge-case intervals.
+- Validation tests for dynamic grace check-in timeout windows and waitlist priority sorting.
+- Mathematical testing for reservation forecasting and QR token verification matrices.
+
+*Current Project Phase: Core logic verified via unit tests. UI components and app shell in progress.*
 
 ---
 
